@@ -252,11 +252,10 @@
 
       isOffScreen(){ return this.completed; }
 
-      // Belly-based occlusion (prevents "coming up from under the rail")
+      // Position-based occlusion (in front before fence, behind after)
       shouldDrawInFrontOfFence(){
-        const bellyY = (this.y - this.bodyBounce) + 17*this.scale;
-        const margin = 2 * this.scale; // WHY: avoid flicker exactly on the rail
-        return bellyY < (this.lane.topRailY - margin);
+        // Sheep are in front when approaching from left, behind after passing fence
+        return this.x < this.fenceX;
       }
 
       draw(time){
