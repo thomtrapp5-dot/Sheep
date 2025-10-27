@@ -105,13 +105,13 @@
 
     // Fence geometry (continuous, extended to back)
     const FENCE_POSTS = [
-      { x:  30, y: 180, width:  5, height: 36, opacity: 0.35 },
-      { x:  80, y: 200, width:  6, height: 44, opacity: 0.40 },
-      { x: 140, y: 225, width:  7, height: 52, opacity: 0.50 },
-      { x: 210, y: 255, width:  9, height: 62, opacity: 0.60 },
-      { x: 290, y: 290, width: 11, height: 74, opacity: 0.70 },
-      { x: 370, y: 330, width: 13, height: 86, opacity: 0.80 },
-      { x: 450, y: 375, width: 15, height: 100, opacity: 0.90 },
+      { x:  30, y: 180, width:  5, height: 36, opacity: 0.65 },
+      { x:  80, y: 200, width:  6, height: 44, opacity: 0.70 },
+      { x: 140, y: 225, width:  7, height: 52, opacity: 0.75 },
+      { x: 210, y: 255, width:  9, height: 62, opacity: 0.80 },
+      { x: 290, y: 290, width: 11, height: 74, opacity: 0.85 },
+      { x: 370, y: 330, width: 13, height: 86, opacity: 0.90 },
+      { x: 450, y: 375, width: 15, height: 100, opacity: 0.95 },
       { x: 530, y: 425, width: 17, height: 114, opacity: 1.00 },
       { x: 610, y: 480, width: 19, height: 128, opacity: 1.00 }
     ];
@@ -129,9 +129,9 @@
 
     // Lanes
     const DEPTH_LANES = [
-      { z: 0.30, y: 180, scale: 0.35, opacity: 0.40 },
-      { z: 0.50, y: 220, scale: 0.55, opacity: 0.60 },
-      { z: 0.75, y: 270, scale: 0.80, opacity: 0.80 },
+      { z: 0.30, y: 180, scale: 0.35, opacity: 0.65 },
+      { z: 0.50, y: 220, scale: 0.55, opacity: 0.75 },
+      { z: 0.75, y: 270, scale: 0.80, opacity: 0.85 },
       { z: 1.10, y: 330, scale: 1.15, opacity: 1.00 },
       { z: 1.50, y: 400, scale: 1.55, opacity: 1.00 }
     ];
@@ -168,8 +168,8 @@
         this.opacity = this.lane.opacity;
         this.z = this.lane.z;
 
-        // Add slight horizontal spawn variation
-        this.x = 6 + Math.random() * 8;
+        // Add slight horizontal spawn variation (off-screen left, walking in)
+        this.x = -60 + Math.random() * 20;
         this.y = this.groundY;
         this.velocityY = 0;
         this.isJumping = false;
