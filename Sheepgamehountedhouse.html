@@ -159,12 +159,17 @@
       constructor(type, spawnTime){
         this.type = type;
         this.lane = DEPTH_LANES[Math.floor(Math.random()*DEPTH_LANES.length)];
-        this.groundY = this.lane.groundY;
+
+        // Add vertical variation within lane to prevent overlap
+        const yVariation = (Math.random() - 0.5) * 15 * this.lane.scale;
+        this.groundY = this.lane.groundY + yVariation;
+
         this.scale = (0.85 + Math.random()*0.15) * this.lane.scale;
         this.opacity = this.lane.opacity;
         this.z = this.lane.z;
 
-        this.x = 6;               // visible spawn
+        // Add slight horizontal spawn variation
+        this.x = 6 + Math.random() * 8;
         this.y = this.groundY;
         this.velocityY = 0;
         this.isJumping = false;
@@ -178,6 +183,9 @@
         this.minClearance = (this.groundY - this.lane.topRailY) + safety;
 
         this.gravity = 800 * this.lane.scale;
+
+        // Add slight speed variation to prevent perfect alignment
+        this.speedVariation = 0.92 + Math.random() * 0.16; // 0.92 to 1.08 multiplier
         this.baseSpeed = 2.5;
 
         this.legPhase=[0,Math.PI,Math.PI,0];
@@ -196,8 +204,8 @@
         const t = Math.min((elapsed - this.spawnTime) / (GAME_DURATION * .55), 1);
         this.baseSpeed = 2.5 + (8.5) * t;
 
-        // horizontal move
-        const vX = this.baseSpeed * 60 * this.z;
+        // horizontal move with variation
+        const vX = this.baseSpeed * 60 * this.z * this.speedVariation;
         this.x += vX * dt;
 
         // Trigger jump so that apex ≈ fenceX and height ≥ minClearance
