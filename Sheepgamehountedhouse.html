@@ -1,0 +1,462 @@
+<!-- /Sheepgame_fixed.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sheep Counting Game — Jump & Depth Fix</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{display:flex;justify-content:center;align-items:center;min-height:100vh;background:#2d5016;font-family:system-ui,Segoe UI,Arial,sans-serif;overflow:hidden}
+    #gameContainer{position:relative;width:95vmin;height:70vmin;background:linear-gradient(to bottom,#1a1a2e 0%,#2d4a5c 40%,#5a8f5a 100%);border:4px solid #333;overflow:hidden;image-rendering:pixelated}
+    canvas{display:block;width:100%;height:100%;image-rendering:pixelated}
+    #timer{position:absolute;top:20px;right:20px;background:rgba(0,0,0,.75);color:#fff;padding:12px 18px;font-weight:800;font-size:2em;border-radius:10px;z-index:10}
+    #endScreen{position:absolute;inset:0;background:rgba(0,0,0,.9);display:none;justify-content:center;align-items:center;flex-direction:column;z-index:100}
+    #endScreen h1{color:#fff;font-size:3em;text-align:center;padding:20px}
+    #endScreen p{color:#aaa;font-size:1.2em;margin-top:20px}
+    #audioControls{position:absolute;bottom:20px;right:20px;z-index:20}
+    #audioToggle{background:rgba(0,0,0,.7);color:#fff;border:none;padding:10px 15px;border-radius:8px;cursor:pointer}
+    .star{position:absolute;width:3px;height:3px;background:#fff;border-radius:50%;box-shadow:0 0 4px #fff;animation:shoot 2.5s linear}
+    @keyframes shoot{from{transform:translateX(0) translateY(0);opacity:1}to{transform:translateX(-400px) translateY(300px);opacity:0}}
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    <div id="timer">00:00</div>
+    <div id="endScreen">
+      <h1>How many sheep<br/>did you count?</h1>
+      <p>(Not including the wolves!)</p>
+    </div>
+    <div id="audioControls">
+      <button id="audioToggle">🔊 Sound On</button>
+    </div>
+  </div>
+
+  <script>
+    // Canvas
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const timerDisplay = document.getElementById('timer');
+    const endScreen = document.getElementById('endScreen');
+    const container = document.getElementById('gameContainer');
+    const audioToggle = document.getElementById('audioToggle');
+
+    const pixelScale = 2;
+    canvas.width = 1200 / pixelScale;
+    canvas.height = 800 / pixelScale;
+
+    // Game params
+    const TOTAL_SHEEP = 356;
+    const WOLF_PERCENTAGE = 0.2;
+    const GAME_DURATION = 180;
+
+    let startTime = Date.now();
+    let animals = [];
+    let animalSpawnCount = 0;
+    let nextSpawnTime = 0;
+    let soundEnabled = true;
+
+    // Audio (tiny)
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    function createAmbience(){
+      if(!soundEnabled) return;
+      const bufferSize = 2 * audioContext.sampleRate;
+      const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+      const out = noiseBuffer.getChannelData(0);
+      for(let i=0;i<bufferSize;i++) out[i] = (Math.random()*2-1)*0.05;
+      const whiteNoise = audioContext.createBufferSource();
+      whiteNoise.buffer=noiseBuffer; whiteNoise.loop=true;
+      const filter = audioContext.createBiquadFilter(); filter.type='lowpass'; filter.frequency.value=400;
+      const gain = audioContext.createGain(); gain.gain.value=0.1;
+      whiteNoise.connect(filter); filter.connect(gain); gain.connect(audioContext.destination);
+      whiteNoise.start();
+      return {whiteNoise, gainNode: gain};
+    }
+    const ambience = createAmbience();
+    function playJumpSound(){
+      if(!soundEnabled) return;
+      const o = audioContext.createOscillator();
+      const g = audioContext.createGain();
+      o.type='sine'; o.frequency.setValueAtTime(200, audioContext.currentTime);
+      o.frequency.exponentialRampToValueAtTime(380, audioContext.currentTime+0.1);
+      g.gain.setValueAtTime(0.11, audioContext.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime+0.12);
+      o.connect(g); g.connect(audioContext.destination);
+      o.start(); o.stop(audioContext.currentTime+0.14);
+    }
+    function playBleatSound(){
+      if(!soundEnabled) return;
+      const o = audioContext.createOscillator();
+      const g = audioContext.createGain();
+      o.type='sawtooth';
+      o.frequency.setValueAtTime(160, audioContext.currentTime);
+      o.frequency.exponentialRampToValueAtTime(110, audioContext.currentTime+0.2);
+      g.gain.setValueAtTime(0.09, audioContext.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime+0.22);
+      o.connect(g); g.connect(audioContext.destination);
+      o.start(); o.stop(audioContext.currentTime+0.24);
+    }
+    audioToggle.addEventListener('click', ()=>{
+      soundEnabled = !soundEnabled;
+      audioToggle.textContent = soundEnabled ? '🔊 Sound On' : '🔇 Sound Off';
+      if(ambience) ambience.gainNode.gain.value = soundEnabled ? 0.1 : 0;
+    });
+
+    // Fence geometry (continuous, extended)
+    const FENCE_POSTS = [
+      { x:  50, y: 190, width:  6, height: 30, opacity: 0.40 },
+      { x: 120, y: 210, width:  8, height: 40, opacity: 0.50 },
+      { x: 200, y: 235, width: 10, height: 50, opacity: 0.60 },
+      { x: 280, y: 265, width: 12, height: 60, opacity: 0.70 },
+      { x: 360, y: 300, width: 14, height: 70, opacity: 0.80 },
+      { x: 440, y: 340, width: 16, height: 80, opacity: 0.90 },
+      { x: 520, y: 385, width: 18, height: 90, opacity: 1.00 },
+      { x: 600, y: 430, width: 20, height:102, opacity: 1.00 }
+    ];
+    function postCenterX(p){ return p.x + p.width/2; }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function sampleRailY(targetY){
+      let i = FENCE_POSTS.findIndex((p,idx)=> targetY>=p.y && targetY<=FENCE_POSTS[idx+1]?.y);
+      if(i<0) i = FENCE_POSTS.length-2;
+      const p1 = FENCE_POSTS[i], p2 = FENCE_POSTS[i+1];
+      const t = (targetY - p1.y) / (p2.y - p1.y);
+      const top1 = p1.y - p1.height + 8, top2 = p2.y - p2.height + 8;
+      const bot1 = p1.y - 8,              bot2 = p2.y - 8;
+      return { top: lerp(top1, top2, t), bot: lerp(bot1, bot2, t) };
+    }
+
+    // Lanes
+    const DEPTH_LANES = [
+      { z: 0.30, y: 180, scale: 0.35, opacity: 0.40 },
+      { z: 0.50, y: 220, scale: 0.55, opacity: 0.60 },
+      { z: 0.75, y: 270, scale: 0.80, opacity: 0.80 },
+      { z: 1.10, y: 330, scale: 1.15, opacity: 1.00 },
+      { z: 1.50, y: 400, scale: 1.55, opacity: 1.00 }
+    ];
+    DEPTH_LANES.forEach(l=>{
+      const s = sampleRailY(l.y);
+      l.topRailY = s.top;
+      l.bottomRailY = s.bot;
+      // Approx fence center X along lane for “where to apex”
+      const t = (l.y - FENCE_POSTS[0].y) / (FENCE_POSTS.at(-1).y - FENCE_POSTS[0].y);
+      l.fenceX = lerp(postCenterX(FENCE_POSTS[0]), postCenterX(FENCE_POSTS.at(-1)), Math.min(Math.max(t,0),1));
+      l.groundY = l.y;
+    });
+
+    function generateAnimalSequence(){
+      const totalAnimals = Math.round(TOTAL_SHEEP / (1 - WOLF_PERCENTAGE));
+      const seq = Array.from({length: TOTAL_SHEEP}, ()=> 'sheep');
+      const wolves = totalAnimals - TOTAL_SHEEP;
+      for(let i=0;i<wolves;i++) seq.push('wolf');
+      for(let i=seq.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [seq[i],seq[j]]=[seq[j],seq[i]]; }
+      return seq;
+    }
+    const animalSequence = generateAnimalSequence();
+
+    class Animal{
+      constructor(type, spawnTime){
+        this.type = type;
+        this.lane = DEPTH_LANES[Math.floor(Math.random()*DEPTH_LANES.length)];
+        this.groundY = this.lane.groundY;
+        this.scale = (0.85 + Math.random()*0.15) * this.lane.scale;
+        this.opacity = this.lane.opacity;
+        this.z = this.lane.z;
+
+        this.x = 6;               // visible spawn
+        this.y = this.groundY;
+        this.velocityY = 0;
+        this.isJumping = false;
+        this.hasJumped = false;
+
+        // Live-computed jump (no fixed start X)
+        this.fenceX = this.lane.fenceX;
+
+        // Clearance target (belly above top rail)
+        const safety = 18 * this.scale; // WHY: avoid clipping even on steep rails
+        this.minClearance = (this.groundY - this.lane.topRailY) + safety;
+
+        this.gravity = 800 * this.lane.scale;
+        this.baseSpeed = 2.5;
+
+        this.legPhase=[0,Math.PI,Math.PI,0];
+        this.bodyBounce=0;
+        this.rotation=0; this.targetRotation=0;
+        this.spawnTime = spawnTime;
+        this.completed = false;
+        this.hasPlayedJumpSound=false;
+        this.hasPlayedBleat=Math.random()<0.2;
+      }
+
+      update(elapsed, dt){
+        if(elapsed < this.spawnTime || this.completed) return;
+
+        // mild speed ramp
+        const t = Math.min((elapsed - this.spawnTime) / (GAME_DURATION * .55), 1);
+        this.baseSpeed = 2.5 + (11.5) * t;
+
+        // horizontal move
+        const vX = this.baseSpeed * 60 * this.z;
+        this.x += vX * dt;
+
+        // Trigger jump so that apex ≈ fenceX and height ≥ minClearance
+        if(!this.isJumping && this.x < this.fenceX){
+          const dx = this.fenceX - this.x;
+          const window = 90 * this.lane.scale; // start within this window before the fence
+          if(dx <= window){
+            // vy to apex exactly at fenceX
+            const vyApex = -(this.gravity * (dx / vX));
+            // vy to guarantee clearance
+            const vyClear = -Math.sqrt(2 * this.gravity * Math.max(this.minClearance, 1));
+            // choose stronger (more negative) upward velocity
+            this.velocityY = Math.min(vyApex, vyClear);
+            this.isJumping = true;
+            if(!this.hasPlayedJumpSound){ playJumpSound(); this.hasPlayedJumpSound=true; }
+          }
+        }
+
+        // vertical physics
+        if(this.isJumping){
+          this.velocityY += this.gravity * dt;
+          this.y += this.velocityY * dt;
+
+          if(this.y >= this.groundY){
+            this.y = this.groundY;
+            this.velocityY = 0;
+            this.isJumping = false;
+            this.hasJumped = true;
+            this.rotation = 0;
+          }else{
+            this.targetRotation = this.velocityY < 0 ? -0.15 : 0.12;
+            this.rotation += (this.targetRotation - this.rotation) * 0.15;
+          }
+        }else{
+          const walk = this.baseSpeed * 0.12 * dt * 60;
+          this.legPhase = this.legPhase.map(p=>p+walk);
+          this.bodyBounce = Math.abs(Math.sin(this.legPhase[0])) * 1;
+        }
+
+        if(this.hasPlayedBleat && Math.random() < 0.002){ playBleatSound(); this.hasPlayedBleat=false; }
+
+        if(this.x > canvas.width + 100) this.completed = true;
+      }
+
+      isOffScreen(){ return this.completed; }
+
+      // Belly-based occlusion (prevents "coming up from under the rail")
+      shouldDrawInFrontOfFence(){
+        const bellyY = (this.y - this.bodyBounce) + 17*this.scale;
+        const margin = 2 * this.scale; // WHY: avoid flicker exactly on the rail
+        return bellyY < (this.lane.topRailY - margin);
+      }
+
+      draw(time){
+        ctx.save();
+        ctx.globalAlpha = this.opacity;
+
+        const drawX = this.x;
+        const drawY = this.y - this.bodyBounce;
+
+        // Shadow scales with height
+        const h = Math.max(0, this.groundY - this.y);
+        const shrink = Math.max(0.45, 1 - h/130);
+        const shadowOpacity = 0.3 * shrink * this.opacity;
+        ctx.fillStyle = `rgba(0,0,0,${shadowOpacity})`;
+        ctx.fillRect(drawX + 10*this.scale, this.groundY + 5, 22*shrink*this.scale, 6*shrink*this.scale);
+
+        ctx.translate(drawX + 20*this.scale, drawY + 17*this.scale);
+        ctx.rotate(this.rotation);
+        ctx.scale(this.scale, this.scale);
+        ctx.translate(-(drawX + 20*this.scale), -(drawY + 17*this.scale));
+
+        // legs back
+        [{x:5,back:true},{x:15,back:true},{x:27,back:false},{x:37,back:false}]
+          .forEach((leg,i)=>{ if(leg.back) this.drawLeg(drawX+leg.x, drawY+17, i); });
+
+        this.drawBody(drawX, drawY);
+
+        // legs front
+        [{x:5,back:true},{x:15,back:true},{x:27,back:false},{x:37,back:false}]
+          .forEach((leg,i)=>{ if(!leg.back) this.drawLeg(drawX+leg.x, drawY+17, i); });
+
+        if(this.type==='wolf') this.drawWolfHead(drawX, drawY);
+        else this.drawSheepHead(drawX, drawY);
+
+        // tail
+        const wag = Math.sin(time*0.005 + this.x*0.01) * 2;
+        ctx.fillStyle = '#3a3a52';
+        ctx.fillRect(drawX-5, drawY+7, 4, 4);
+        ctx.fillRect(drawX-5 + wag, drawY+5, 4, 4);
+
+        ctx.restore();
+      }
+
+      drawLeg(x,y,idx){
+        const phase = this.legPhase[idx];
+        let upper=0, lower=0;
+        if(!this.isJumping){ const s = Math.sin(phase); upper = s*0.4; lower = Math.max(0,-s)*0.6; }
+        else{ upper = this.velocityY<0 ? -0.5 : 0.3; lower = this.velocityY<0 ? 0.9 : 0.7; }
+        ctx.save();
+        ctx.translate(x+3,y); ctx.rotate(upper);
+        ctx.fillStyle='#3a3a52'; ctx.fillRect(-3,0,6,11);
+        ctx.translate(0,11); ctx.rotate(lower);
+        ctx.fillStyle='#3a3a52'; ctx.fillRect(-3,0,6,11);
+        ctx.fillStyle='#2a2a3a'; ctx.fillRect(-4,10,8,5);
+        ctx.restore();
+      }
+      drawBody(bx,by){
+        const x=bx+20, y=by+12;
+        ctx.fillStyle='#f4e4c1'; ctx.fillRect(x-27,y-17,54,34);
+        ctx.fillStyle='#e8d4a8';
+        for(let i=0;i<8;i++){ const a=(i/8)*Math.PI*2, fx=x+Math.cos(a)*17, fy=y+Math.sin(a)*11; ctx.fillRect(fx-4,fy-4,8,8); }
+        ctx.fillStyle='#f9edd4'; ctx.fillRect(x+2,y-7,15,10);
+        ctx.fillStyle='#e8d4a8'; ctx.fillRect(bx+37,by+10,9,7);
+      }
+      drawSheepHead(bx,by){
+        const x=bx+42, y=by+5;
+        ctx.fillStyle='#8b6b5d'; ctx.fillRect(x-11,y-9,22,18);
+        ctx.fillStyle='#a08070'; ctx.fillRect(x+7,y+2,6,5);
+        ctx.fillStyle='#6b5b4d'; ctx.fillRect(x-4,y-14,4,7);
+        ctx.fillStyle='#8b6b5d'; ctx.fillRect(x-3,y-12,2,4);
+        ctx.fillStyle='#2a2a3a'; ctx.fillRect(x+3,y-2,2,2);
+        ctx.fillStyle='#ffffff'; ctx.fillRect(x+3,y-2,1,1);
+        ctx.fillStyle='#5a4a3d'; ctx.fillRect(x+10,y+3,1,1);
+      }
+      drawWolfHead(bx,by){
+        const x=bx+42, y=by+5;
+        ctx.fillStyle='#4a4a5c'; ctx.fillRect(x-12,y-10,24,20);
+        ctx.fillStyle='#6b5b4d'; ctx.fillRect(x+5,y-2,8,5); ctx.fillRect(x+5,y-1,8,1);
+        ctx.fillStyle='#4a4a5c'; ctx.fillRect(x-5,y-14,3,6); ctx.fillRect(x+2,y-14,3,6);
+        ctx.fillStyle='#8b6b5d'; ctx.fillRect(x-4,y-12,1,3); ctx.fillRect(x+3,y-12,1,3);
+        ctx.fillStyle='#f4d03f'; ctx.fillRect(x+3,y-3,3,4);
+        ctx.fillStyle='#1a1a1a'; ctx.fillRect(x+3,y-2,1,2);
+        ctx.fillStyle='#2a2a2a'; ctx.fillRect(x+14,y+1,2,2);
+        ctx.fillStyle='#fff8dc'; ctx.fillRect(x+11,y+4,1,2); ctx.fillRect(x+13,y+3,1,2);
+      }
+    }
+
+    // Background
+    function drawPixelStars(time){
+      for(let i=0;i<75;i++){
+        const x=(i*137)%canvas.width, y=(i*219)%200;
+        const tw = Math.sin(time*0.002 + i)*0.5+0.5;
+        const sz = ((i%3)+1)*tw;
+        ctx.fillStyle = `rgba(255,255,255,${0.6 + tw*0.4})`;
+        ctx.fillRect(x,y,sz,sz);
+      }
+    }
+    function drawPixelGround(){
+      const horizonY=160;
+      ctx.fillStyle='#2a4a2a'; ctx.fillRect(0,horizonY,canvas.width,canvas.height-horizonY);
+      ctx.fillStyle='#3a5a3a'; ctx.fillRect(0,horizonY+40,canvas.width,canvas.height-horizonY-40);
+      ctx.fillStyle='#4a7a4a'; ctx.fillRect(0,horizonY+80,canvas.width,canvas.height-horizonY-80);
+      ctx.fillStyle='#5a8f5a'; ctx.fillRect(0,horizonY+120,canvas.width,canvas.height-horizonY-120);
+      ctx.fillStyle='#6aa06a'; ctx.fillRect(0,horizonY+160,canvas.width,canvas.height-horizonY-160);
+      ctx.fillStyle='rgba(70,110,70,.5)';
+      for(let i=0;i<10;i++){
+        const y=horizonY+(i*35), w=canvas.width*(1-i*0.05), ox=(canvas.width-w)/2;
+        ctx.fillRect(ox,y,w,2+i);
+      }
+      ctx.fillStyle='rgba(70,110,70,.7)';
+      for(let i=0;i<50;i++){
+        const x=(i*37)%canvas.width, y=180+(i*19)%240, s=1+(y-180)/40;
+        ctx.fillRect(x,y,s,s*2);
+      }
+    }
+
+    // Continuous fence draw
+    function drawFenceContinuous(){
+      for(const p of FENCE_POSTS){
+        ctx.fillStyle = `rgba(90,74,61,${p.opacity})`;
+        ctx.fillRect(p.x, p.y - p.height, p.width, p.height);
+        ctx.fillStyle = `rgba(106,90,77,${p.opacity})`;
+        ctx.fillRect(p.x - 2, p.y - p.height - 3, p.width + 4, 4);
+      }
+      const centers = FENCE_POSTS.map(p=> p.x + p.width/2);
+      const tops = FENCE_POSTS.map(p=> p.y - p.height + 8);
+      const bots = FENCE_POSTS.map(p=> p.y - 8);
+      const avgAlpha = FENCE_POSTS.reduce((a,p)=>a+p.opacity,0)/FENCE_POSTS.length;
+
+      ctx.fillStyle = `rgba(90,74,61,${avgAlpha})`;
+      ctx.beginPath(); ctx.moveTo(centers[0], tops[0]);
+      for(let i=1;i<centers.length;i++) ctx.lineTo(centers[i], tops[i]);
+      for(let i=centers.length-1;i>=0;i--) ctx.lineTo(centers[i], tops[i] + 6);
+      ctx.closePath(); ctx.fill();
+
+      ctx.beginPath(); ctx.moveTo(centers[0], bots[0]);
+      for(let i=1;i<centers.length;i++) ctx.lineTo(centers[i], bots[i]);
+      for(let i=centers.length-1;i>=0;i--) ctx.lineTo(centers[i], bots[i] + 6);
+      ctx.closePath(); ctx.fill();
+    }
+
+    // Misc
+    function spawnShootingStar(){
+      if(Math.random()<0.008){
+        const star=document.createElement('div');
+        star.className='star';
+        star.style.left=(50+Math.random()*50)+'%';
+        star.style.top=(Math.random()*30)+'%';
+        container.appendChild(star);
+        setTimeout(()=>star.remove(),2500);
+      }
+    }
+    function updateTimer(elapsed){
+      const m = Math.floor(elapsed/60), s=Math.floor(elapsed%60);
+      timerDisplay.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+    function getCurrentSpawnGap(elapsed){
+      const start=0.9, end=0.35;
+      const t = Math.min(elapsed/GAME_DURATION,1);
+      return start + (end - start)*t;
+    }
+
+    // Loop
+    let lastFrameTime = Date.now();
+    function gameLoop(){
+      const now = Date.now();
+      const dt = Math.min((now - lastFrameTime)/1000, 0.1);
+      lastFrameTime = now;
+
+      const elapsed = (now - startTime)/1000;
+      if(elapsed >= GAME_DURATION){ endScreen.style.display='flex'; return; }
+
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      drawPixelStars(now);
+      drawPixelGround();
+
+      // spawn
+      if(elapsed >= nextSpawnTime && animalSpawnCount < animalSequence.length){
+        animals.push(new Animal(animalSequence[animalSpawnCount], elapsed));
+        animalSpawnCount++;
+        nextSpawnTime = elapsed + getCurrentSpawnGap(elapsed);
+      }
+
+      // update & keep
+      animals.forEach(a=>a.update(elapsed, dt));
+      animals = animals.filter(a=>!a.isOffScreen());
+
+      // Pass A: behind
+      animals
+        .filter(a=>!a.shouldDrawInFrontOfFence())
+        .sort((a,b)=> (a.lane.z - b.lane.z) || (a.x - b.x))
+        .forEach(a=>a.draw(now));
+
+      // Fence
+      drawFenceContinuous();
+
+      // Pass B: in front
+      animals
+        .filter(a=>a.shouldDrawInFrontOfFence())
+        .sort((a,b)=> (a.lane.z - b.lane.z) || (a.x - b.x))
+        .forEach(a=>a.draw(now));
+
+      updateTimer(elapsed);
+      spawnShootingStar();
+
+      requestAnimationFrame(gameLoop);
+    }
+    gameLoop();
+  </script>
+</body>
+</html>
+
